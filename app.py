@@ -503,11 +503,12 @@ def main():
         if st.session_state.selected_province:
             sel = st.session_state.selected_province
             colors = [
-                "#f4d03f" if row["name_en"] == sel else None
+                "#f4d03f" if row["name_en"] == sel else "#1565c0"
                 for _, row in province_df.sort_values("population").iterrows()
             ]
+            # coloraxis는 layout에서 제거, trace에는 marker_color만 설정
             fig_bar.update_traces(marker_color=colors)
-            fig_bar.update_traces(coloraxis=None)
+            fig_bar.update_layout(coloraxis=None)
 
         st.plotly_chart(fig_bar, use_container_width=True)
 
