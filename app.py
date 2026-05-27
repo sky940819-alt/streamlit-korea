@@ -199,12 +199,12 @@ def build_municipality_df(province_en: str) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 # Folium 지도 생성 함수
 # ──────────────────────────────────────────────────────────────────────────────
-@st.cache_resource
 def make_province_map(geo_path: str) -> folium.Map:
     """시도별 인구 Choropleth + 클릭/호버 GeoJson 레이어.
-    @st.cache_resource 사용 → folium.Map 직렬화 없이 캐싱.
-    selected 파라미터 제거 → 항상 동일한 Map 객체 반환
-    → st_folium iframe 재초기화 없음 → 클릭 시 지도 사라짐 방지."""
+    캐시 없음: st_folium이 Map 객체를 렌더 시 내부 뮤테이션하므로
+    캐시된 객체를 재사용하면 두 번째 렌더부터 지도가 표시되지 않음.
+    대신 GeoJSON 데이터는 prepare_province_geo(@st.cache_data)에서 캐싱됨.
+    단순화된 GeoJSON(0.5 MB)이므로 매번 빌드해도 빠름."""
     province_geo = prepare_province_geo(geo_path)
     m = folium.Map(
         location=[36.5, 127.8],
@@ -259,14 +259,13 @@ def make_province_map(geo_path: str) -> folium.Map:
     return m
 
 
-@st.cache_resource
 def make_municipality_map(
     geo_path: str,
     province_en: str,
 ) -> folium.Map:
     """선택된 시도의 시군구별 인구 지도.
-    @st.cache_resource 사용 → folium.Map 직렬화 없이 캐싱.
-    인자를 경로·문자열로만 받아 해시 가능하게 처리."""
+    캐시 없음: st_folium 렌더 시 Map 객체 뮤테이션 문제 방지.
+    GeoJSON 데이터는 prepare_muni_geo(@st.cache_data)에서 캐싱됨."""
     muni_geo = prepare_muni_geo(geo_path, province_en)
     if not muni_geo["features"]:
         return None
