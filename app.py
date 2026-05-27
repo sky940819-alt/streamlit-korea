@@ -199,10 +199,12 @@ def build_municipality_df(province_en: str) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 # Folium 지도 생성 함수
 # ──────────────────────────────────────────────────────────────────────────────
-@st.cache_data
-def make_province_map(province_geo: dict, selected: str | None) -> folium.Map:
+@st.cache_resource
+def make_province_map(geo_path: str, selected: str | None) -> folium.Map:
     """시도별 인구 Choropleth + 클릭/호버 GeoJson 레이어.
-    province_geo 는 prepare_province_geo() 로 이미 전처리된 dict."""
+    @st.cache_resource 사용 → folium.Map 직렬화 없이 캐싱.
+    인자를 경로 문자열로만 받아 해시 가능하게 처리."""
+    province_geo = prepare_province_geo(geo_path)
     m = folium.Map(
         location=[36.5, 127.8],
         zoom_start=7,
@@ -259,13 +261,15 @@ def make_province_map(province_geo: dict, selected: str | None) -> folium.Map:
     return m
 
 
-@st.cache_data
+@st.cache_resource
 def make_municipality_map(
-    muni_geo: dict,
+    geo_path: str,
     province_en: str,
 ) -> folium.Map:
     """선택된 시도의 시군구별 인구 지도.
-    muni_geo 는 prepare_muni_geo() 로 이미 전처리된 dict."""
+    @st.cache_resource 사용 → folium.Map 직렬화 없이 캐싱.
+    인자를 경로·문자열로만 받아 해시 가능하게 처리."""
+    muni_geo = prepare_muni_geo(geo_path, province_en)
     if not muni_geo["features"]:
         return None
 
@@ -350,11 +354,10 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # 데이터 로드 (모두 캐시됨)
+    # 경로 (make_province_map/make_municipality_map 에 직접 전달)
     province_geo_path = os.path.join(BASE_DIR, "data", "provinces.geojson")
     muni_geo_path     = os.path.join(BASE_DIR, "data", "municipalities.geojson")
-    province_geo = prepare_province_geo(province_geo_path)
-    province_df  = build_province_df()
+    province_df = build_province_df()
 
     # 세션 상태 초기화
     if "selected_province" not in st.session_state:
@@ -444,7 +447,7 @@ def main():
         st.caption("지도 위에 마우스를 올리면 인구가 표시되고, 클릭하면 해당 시도를 선택합니다.")
 
         prov_map = make_province_map(
-            province_geo,
+            province_geo_path,
             st.session_state.selected_province,
         )
         map_data = st_folium(
@@ -572,8 +575,7 @@ def main():
     if st.session_state.selected_province:
         sel_en = st.session_state.selected_province
         sel_ko = PROVINCE_KO.get(sel_en, sel_en)
-        muni_df       = build_municipality_df(sel_en)
-        muni_geo_prep = prepare_muni_geo(muni_geo_path, sel_en)
+        muni_df = build_municipality_df(sel_en)
 
         st.markdown("---")
         st.markdown(
@@ -636,7 +638,7 @@ def main():
                     f'<div class="section-title">🗺️ {sel_ko} 시군구 지도</div>',
                     unsafe_allow_html=True,
                 )
-                muni_map = make_municipality_map(muni_geo_prep, sel_en)
+                muni_map = make_municipality_map(muni_geo_path, sel_en)
                 if muni_map:
                     st_folium(muni_map, width="100%", height=460, key="municipality_map")
                 else:
