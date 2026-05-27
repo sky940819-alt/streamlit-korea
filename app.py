@@ -355,8 +355,9 @@ def main():
     )
 
     # 경로 (make_province_map/make_municipality_map 에 직접 전달)
-    province_geo_path = os.path.join(BASE_DIR, "data", "provinces.geojson")
-    muni_geo_path     = os.path.join(BASE_DIR, "data", "municipalities.geojson")
+    # 단순화된 GeoJSON 사용 (원본 대비 ~3~5% 크기, 로딩 속도 대폭 향상)
+    province_geo_path = os.path.join(BASE_DIR, "data", "provinces_simple.geojson")
+    muni_geo_path     = os.path.join(BASE_DIR, "data", "municipalities_simple.geojson")
     province_df = build_province_df()
 
     # 세션 상태 초기화
