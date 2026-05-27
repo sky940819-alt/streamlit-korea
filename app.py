@@ -119,6 +119,42 @@ def load_geojson(path: str) -> dict:
 
 
 @st.cache_data
+def prepare_province_geo(path: str) -> dict:
+    """GeoJSON을 로드하고 한국어 이름·인구 데이터를 미리 주입해 캐싱.
+    원본 객체를 수정하지 않고 새 dict 을 반환한다."""
+    raw = load_geojson(path)
+    pop_map = PROVINCE_POPULATION
+    features = []
+    for f in raw["features"]:
+        props = dict(f["properties"])   # 얕은 복사로 원본 보호
+        name_en = props.get("NAME_1", "")
+        pop = pop_map.get(name_en, 0)
+        props["name_ko"] = PROVINCE_KO.get(name_en, name_en)
+        props["population_fmt"] = f"{pop:,} 명"
+        props["population_10k"] = f"{pop / 10_000:.1f} 만 명"
+        features.append({**f, "properties": props})
+    return {"type": "FeatureCollection", "features": features}
+
+
+@st.cache_data
+def prepare_muni_geo(path: str, province_en: str) -> dict:
+    """시도에 해당하는 시군구 GeoJSON만 필터링하고 데이터 주입 후 캐싱."""
+    raw = load_geojson(path)
+    features = []
+    for f in raw["features"]:
+        if f["properties"].get("NAME_1", "") != province_en:
+            continue
+        props = dict(f["properties"])
+        name_en2 = props.get("NAME_2", "")
+        pop = MUNICIPALITY_POPULATION.get((province_en, name_en2), 0)
+        props["name_ko"] = MUNICIPALITY_KO.get((province_en, name_en2), name_en2)
+        props["population_fmt"] = f"{pop:,} 명"
+        props["population_10k"] = f"{pop / 10_000:.1f} 만 명"
+        features.append({**f, "properties": props})
+    return {"type": "FeatureCollection", "features": features}
+
+
+@st.cache_data
 def build_province_df() -> pd.DataFrame:
     rows = []
     for name_en, pop in PROVINCE_POPULATION.items():
@@ -163,8 +199,10 @@ def build_municipality_df(province_en: str) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 # Folium 지도 생성 함수
 # ──────────────────────────────────────────────────────────────────────────────
-def make_province_map(province_geo: dict, province_df: pd.DataFrame, selected: str | None) -> folium.Map:
-    """시도별 인구 Choropleth + 클릭/호버 GeoJson 레이어."""
+@st.cache_data
+def make_province_map(province_geo: dict, selected: str | None) -> folium.Map:
+    """시도별 인구 Choropleth + 클릭/호버 GeoJson 레이어.
+    province_geo 는 prepare_province_geo() 로 이미 전처리된 dict."""
     m = folium.Map(
         location=[36.5, 127.8],
         zoom_start=7,
@@ -172,56 +210,28 @@ def make_province_map(province_geo: dict, province_df: pd.DataFrame, selected: s
         prefer_canvas=True,
     )
 
-    # 인구 → 색상 매핑
-    pop_map = dict(zip(province_df["name_en"], province_df["population"]))
-    max_pop = province_df["population"].max()
+    pop_map = PROVINCE_POPULATION
+    max_pop = max(pop_map.values())
 
-    # 호버/클릭 이벤트용 GeoJson
     def style_fn(feature):
         name = feature["properties"].get("NAME_1", "")
         pop = pop_map.get(name, 0)
         ratio = pop / max_pop if max_pop > 0 else 0
-        # 진한 파란색 그라데이션
-        if ratio > 0.7:
-            fill = "#0d47a1"
-        elif ratio > 0.5:
-            fill = "#1565c0"
-        elif ratio > 0.35:
-            fill = "#1976d2"
-        elif ratio > 0.2:
-            fill = "#1e88e5"
-        elif ratio > 0.1:
-            fill = "#42a5f5"
-        elif ratio > 0.05:
-            fill = "#90caf9"
-        else:
-            fill = "#bbdefb"
-        # 선택된 지역 강조
+        if ratio > 0.7:   fill = "#0d47a1"
+        elif ratio > 0.5: fill = "#1565c0"
+        elif ratio > 0.35:fill = "#1976d2"
+        elif ratio > 0.2: fill = "#1e88e5"
+        elif ratio > 0.1: fill = "#42a5f5"
+        elif ratio > 0.05:fill = "#90caf9"
+        else:             fill = "#bbdefb"
         if name == selected:
-            return {
-                "fillColor": "#f4d03f",
-                "color": "#f39c12",
-                "weight": 3,
-                "fillOpacity": 0.85,
-            }
-        return {
-            "fillColor": fill,
-            "color": "#263238",
-            "weight": 1,
-            "fillOpacity": 0.75,
-        }
+            return {"fillColor": "#f4d03f", "color": "#f39c12",
+                    "weight": 3, "fillOpacity": 0.85}
+        return {"fillColor": fill, "color": "#263238",
+                "weight": 1, "fillOpacity": 0.75}
 
     def highlight_fn(feature):
         return {"fillOpacity": 1.0, "weight": 3, "color": "#ffffff"}
-
-    # 툴팁 데이터 주입
-    for feature in province_geo["features"]:
-        name_en = feature["properties"].get("NAME_1", "")
-        name_ko = PROVINCE_KO.get(name_en, name_en)
-        pop = pop_map.get(name_en, 0)
-        feature["properties"]["name_ko"] = name_ko
-        feature["properties"]["population_fmt"] = f"{pop:,} 명"
-        feature["properties"]["population_10k"] = f"{pop / 10_000:.1f} 만 명"
 
     folium.GeoJson(
         province_geo,
@@ -249,40 +259,32 @@ def make_province_map(province_geo: dict, province_df: pd.DataFrame, selected: s
     return m
 
 
+@st.cache_data
 def make_municipality_map(
     muni_geo: dict,
-    muni_df: pd.DataFrame,
     province_en: str,
 ) -> folium.Map:
-    """선택된 시도의 시군구별 인구 지도."""
-    # 해당 시도의 피처만 필터
-    filtered = {
-        "type": "FeatureCollection",
-        "features": [
-            f for f in muni_geo["features"]
-            if f["properties"].get("NAME_1", "") == province_en
-        ],
-    }
-    if not filtered["features"]:
+    """선택된 시도의 시군구별 인구 지도.
+    muni_geo 는 prepare_muni_geo() 로 이미 전처리된 dict."""
+    if not muni_geo["features"]:
         return None
 
-    pop_map = dict(zip(muni_df["name_en"], muni_df["population"]))
-    max_pop = muni_df["population"].max() if not muni_df.empty else 1
+    pop_map = {f["properties"].get("NAME_2", ""): MUNICIPALITY_POPULATION.get(
+        (province_en, f["properties"].get("NAME_2", "")), 0)
+        for f in muni_geo["features"]}
+    max_pop = max(pop_map.values()) if pop_map else 1
 
     # 중심 좌표 계산
     all_coords = []
-    for f in filtered["features"]:
+    for f in muni_geo["features"]:
         geom = f["geometry"]
         if geom["type"] == "Polygon":
             all_coords.extend(geom["coordinates"][0])
         elif geom["type"] == "MultiPolygon":
             for poly in geom["coordinates"]:
                 all_coords.extend(poly[0])
-    if all_coords:
-        avg_lat = sum(c[1] for c in all_coords) / len(all_coords)
-        avg_lon = sum(c[0] for c in all_coords) / len(all_coords)
-    else:
-        avg_lat, avg_lon = 36.5, 127.8
+    avg_lat = sum(c[1] for c in all_coords) / len(all_coords) if all_coords else 36.5
+    avg_lon = sum(c[0] for c in all_coords) / len(all_coords) if all_coords else 127.8
 
     m = folium.Map(
         location=[avg_lat, avg_lon],
@@ -290,15 +292,6 @@ def make_municipality_map(
         tiles="CartoDB dark_matter",
         prefer_canvas=True,
     )
-
-    # 데이터 주입
-    for feature in filtered["features"]:
-        name_en = feature["properties"].get("NAME_2", "")
-        name_ko = MUNICIPALITY_KO.get((province_en, name_en), name_en)
-        pop = pop_map.get(name_en, 0)
-        feature["properties"]["name_ko"] = name_ko
-        feature["properties"]["population_fmt"] = f"{pop:,} 명"
-        feature["properties"]["population_10k"] = f"{pop / 10_000:.1f} 만 명"
 
     def style_fn(feature):
         name = feature["properties"].get("NAME_2", "")
@@ -357,14 +350,17 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # 데이터 로드
-    province_geo = load_geojson(os.path.join(BASE_DIR, "data", "provinces.geojson"))
-    muni_geo = load_geojson(os.path.join(BASE_DIR, "data", "municipalities.geojson"))
-    province_df = build_province_df()
+    # 데이터 로드 (모두 캐시됨)
+    province_geo_path = os.path.join(BASE_DIR, "data", "provinces.geojson")
+    muni_geo_path     = os.path.join(BASE_DIR, "data", "municipalities.geojson")
+    province_geo = prepare_province_geo(province_geo_path)
+    province_df  = build_province_df()
 
     # 세션 상태 초기화
     if "selected_province" not in st.session_state:
         st.session_state.selected_province = None
+    if "_last_map_click" not in st.session_state:
+        st.session_state._last_map_click = None   # 클릭 중복 방지용
 
     # ── 상단 집계 지표 ──────────────────────────────────────────────────────
     total_pop = province_df["population"].sum()
@@ -449,26 +445,25 @@ def main():
 
         prov_map = make_province_map(
             province_geo,
-            province_df,
             st.session_state.selected_province,
         )
         map_data = st_folium(
             prov_map,
             width="100%",
             height=520,
-            returned_objects=["last_object_clicked_popup", "last_active_drawing"],
+            returned_objects=["last_object_clicked_popup"],
             key="province_map",
         )
 
-        # 클릭 이벤트 처리
+        # ── 클릭 이벤트 처리 (st.rerun() 제거 → 무한 루프 방지) ──────────
         clicked = map_data.get("last_object_clicked_popup")
-        if clicked:
-            # popup 텍스트에서 한국어 지역명 추출 → NAME_1 역매핑
+        if clicked and clicked != st.session_state._last_map_click:
+            # 이번 클릭이 이전과 다를 때만 처리 (중복 방지)
+            st.session_state._last_map_click = clicked
             for name_en, name_ko in PROVINCE_KO.items():
                 if name_ko in str(clicked):
-                    if st.session_state.selected_province != name_en:
-                        st.session_state.selected_province = name_en
-                        st.rerun()
+                    st.session_state.selected_province = name_en
+                    # selectbox index 동기화를 위해 selectbox key 리셋
                     break
 
     with col_chart:
@@ -577,7 +572,8 @@ def main():
     if st.session_state.selected_province:
         sel_en = st.session_state.selected_province
         sel_ko = PROVINCE_KO.get(sel_en, sel_en)
-        muni_df = build_municipality_df(sel_en)
+        muni_df       = build_municipality_df(sel_en)
+        muni_geo_prep = prepare_muni_geo(muni_geo_path, sel_en)
 
         st.markdown("---")
         st.markdown(
@@ -640,7 +636,7 @@ def main():
                     f'<div class="section-title">🗺️ {sel_ko} 시군구 지도</div>',
                     unsafe_allow_html=True,
                 )
-                muni_map = make_municipality_map(muni_geo, muni_df, sel_en)
+                muni_map = make_municipality_map(muni_geo_prep, sel_en)
                 if muni_map:
                     st_folium(muni_map, width="100%", height=460, key="municipality_map")
                 else:
