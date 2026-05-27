@@ -200,10 +200,11 @@ def build_municipality_df(province_en: str) -> pd.DataFrame:
 # Folium 지도 생성 함수
 # ──────────────────────────────────────────────────────────────────────────────
 @st.cache_resource
-def make_province_map(geo_path: str, selected: str | None) -> folium.Map:
+def make_province_map(geo_path: str) -> folium.Map:
     """시도별 인구 Choropleth + 클릭/호버 GeoJson 레이어.
     @st.cache_resource 사용 → folium.Map 직렬화 없이 캐싱.
-    인자를 경로 문자열로만 받아 해시 가능하게 처리."""
+    selected 파라미터 제거 → 항상 동일한 Map 객체 반환
+    → st_folium iframe 재초기화 없음 → 클릭 시 지도 사라짐 방지."""
     province_geo = prepare_province_geo(geo_path)
     m = folium.Map(
         location=[36.5, 127.8],
@@ -219,16 +220,13 @@ def make_province_map(geo_path: str, selected: str | None) -> folium.Map:
         name = feature["properties"].get("NAME_1", "")
         pop = pop_map.get(name, 0)
         ratio = pop / max_pop if max_pop > 0 else 0
-        if ratio > 0.7:   fill = "#0d47a1"
-        elif ratio > 0.5: fill = "#1565c0"
-        elif ratio > 0.35:fill = "#1976d2"
-        elif ratio > 0.2: fill = "#1e88e5"
-        elif ratio > 0.1: fill = "#42a5f5"
-        elif ratio > 0.05:fill = "#90caf9"
-        else:             fill = "#bbdefb"
-        if name == selected:
-            return {"fillColor": "#f4d03f", "color": "#f39c12",
-                    "weight": 3, "fillOpacity": 0.85}
+        if ratio > 0.7:    fill = "#0d47a1"
+        elif ratio > 0.5:  fill = "#1565c0"
+        elif ratio > 0.35: fill = "#1976d2"
+        elif ratio > 0.2:  fill = "#1e88e5"
+        elif ratio > 0.1:  fill = "#42a5f5"
+        elif ratio > 0.05: fill = "#90caf9"
+        else:              fill = "#bbdefb"
         return {"fillColor": fill, "color": "#263238",
                 "weight": 1, "fillOpacity": 0.75}
 
@@ -447,10 +445,18 @@ def main():
         st.markdown('<div class="section-title">📌 시도별 인구 분포 지도</div>', unsafe_allow_html=True)
         st.caption("지도 위에 마우스를 올리면 인구가 표시되고, 클릭하면 해당 시도를 선택합니다.")
 
-        prov_map = make_province_map(
-            province_geo_path,
-            st.session_state.selected_province,
-        )
+        # 선택된 시도 배지 표시 (지도 위)
+        if st.session_state.selected_province:
+            sel_badge = PROVINCE_KO.get(st.session_state.selected_province, "")
+            st.markdown(
+                f'<div class="selected-badge">📍 선택됨: {sel_badge}</div>',
+                unsafe_allow_html=True,
+            )
+
+        # make_province_map은 selected 파라미터 없이 항상 동일한 캐시 객체 반환
+        # → st_folium이 동일한 Map 객체를 수신 → iframe 재초기화 없음
+        # → 클릭해도 지도가 사라지지 않음
+        prov_map = make_province_map(province_geo_path)
         map_data = st_folium(
             prov_map,
             width="100%",
@@ -459,15 +465,13 @@ def main():
             key="province_map",
         )
 
-        # ── 클릭 이벤트 처리 (st.rerun() 제거 → 무한 루프 방지) ──────────
+        # ── 클릭 이벤트 처리 ──────────────────────────────────────────────
         clicked = map_data.get("last_object_clicked_popup")
         if clicked and clicked != st.session_state._last_map_click:
-            # 이번 클릭이 이전과 다를 때만 처리 (중복 방지)
             st.session_state._last_map_click = clicked
             for name_en, name_ko in PROVINCE_KO.items():
                 if name_ko in str(clicked):
                     st.session_state.selected_province = name_en
-                    # selectbox index 동기화를 위해 selectbox key 리셋
                     break
 
     with col_chart:
