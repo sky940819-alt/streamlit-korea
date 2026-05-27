@@ -321,7 +321,7 @@ def make_municipality_map(
         return {"fillOpacity": 1.0, "weight": 2.5, "color": "#ffffff"}
 
     folium.GeoJson(
-        filtered,
+        muni_geo,
         name="시군구별 인구",
         style_function=style_fn,
         highlight_function=highlight_fn,
