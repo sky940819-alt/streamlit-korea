@@ -1,0 +1,64 @@
+name: CI – Test & Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 3.11 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 패키지 설치
+        run: pip install -r requirements.txt
+
+      - name: 문법 검사
+        run: python -m py_compile app.py data/population_data.py
+
+      - name: 데이터 무결성 검사
+        run: |
+          python - <<'EOF'
+          import json, sys
+          sys.path.insert(0, '.')
+          from data.population_data import PROVINCE_POPULATION, MUNICIPALITY_POPULATION
+
+          # GeoJSON 키와 인구 데이터 키가 일치하는지 확인
+          with open('data/provinces.geojson', encoding='utf-8') as f:
+              pg = json.load(f)
+          with open('data/municipalities.geojson', encoding='utf-8') as f:
+              mg = json.load(f)
+
+          geo_prov = {f['properties']['NAME_1'] for f in pg['features']}
+          pop_prov  = set(PROVINCE_POPULATION.keys())
+          assert geo_prov == pop_prov, f"Province mismatch: {geo_prov ^ pop_prov}"
+
+          geo_muni = {(f['properties']['NAME_1'], f['properties']['NAME_2']) for f in mg['features']}
+          pop_muni = set(MUNICIPALITY_POPULATION.keys())
+          assert geo_muni == pop_muni, f"Municipality mismatch: {geo_muni ^ pop_muni}"
+
+          print("✅ 모든 데이터 무결성 검사 통과")
+          print(f"   시도: {len(geo_prov)}개  시군구: {len(geo_muni)}개")
+          print(f"   전국 총 인구: {sum(PROVINCE_POPULATION.values()):,} 명")
+          EOF
+
+      - name: Streamlit 앱 임포트 검사
+        run: |
+          python -c "
+          import importlib.util, sys, os
+          sys.path.insert(0, '.')
+          # 주요 import 경로 확인
+          for mod in ['folium', 'streamlit_folium', 'plotly', 'pandas']:
+              importlib.import_module(mod)
+              print(f'✅ {mod} OK')
+          "
