@@ -5,4 +5,5 @@
 .env
 streamlit_out.txt
 streamlit_err.txt
-.streamlit/
+# .streamlit/secrets.toml 은 제외, config.toml 은 포함
+.streamlit/secrets.toml
